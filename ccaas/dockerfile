@@ -1,0 +1,53 @@
+#####################################################################################
+## BUILDER: Aquí se genera el código listo para el runtime
+#####################################################################################
+# Stage 1: Build
+# Imagen base para el builder
+FROM node:18-alpine AS builder
+
+# Definimos nuestro directorio de trabajo
+WORKDIR /usr/src/chaincode
+
+# Copiamos nuestros archivos de configuración dentro del builder
+COPY package.json package-lock.json tsconfig.json ./
+# Copiamos el directorio src de nuestro proyecto, dentro del builder
+COPY ./src ./src
+
+# Instalamos dependencias y compilamos
+RUN npm install && npm run build
+
+#####################################################################################
+## RUNTIME: La imagen unicamente con el código necesario para ejecutar el chaincode
+#####################################################################################
+FROM node:18-alpine
+
+# Varible para almacenar el chaincode port
+# A diferencia de las variables definidas con ENV esta 
+# variable es solo accesible durante el proceso de contrucción de la imagen
+# no durante la ejecución del contenedor
+ARG CC_SERVER_PORT=9999
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+WORKDIR /usr/src/chaincode
+
+# Copiar archivos compilados y package.json desde el builder a la imagen final
+COPY --from=builder /usr/src/chaincode/dist ./dist
+COPY --from=builder /usr/src/chaincode/package.json ./
+COPY --from=builder /usr/src/chaincode/package-lock.json ./
+
+# Instalamos dependencias epspecificadas en package-lock.json con clean install
+# Y limpiamos el cache
+RUN npm ci --omit=dev && npm cache clean --force
+
+
+# Definimos varibles de entorno usadas por Fabric
+ENV CHAINCODE_SERVER_ADDRESS=0.0.0.0:${CC_SERVER_PORT}
+ENV PORT=${CC_SERVER_PORT}
+
+# Exponemos el puerto del servidor del chaincode
+EXPOSE ${CC_SERVER_PORT}
+
+# Iniciamos el servicio
+CMD ["npm", "run", "start"]
